@@ -510,6 +510,12 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:0;bac
       <input type="date" id="rdate" class="rpinp" style="flex:1">
       <button class="rpsrch" id="rsrch" disabled>Suchen</button>
     </div>
+    <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:6px;min-height:22px">
+      <span class="cdwn" id="rpcdwn" hidden>Update in <b>30</b>s</span>
+      <button class="ibtn" id="rprbtn" hidden title="Verbindungen aktualisieren" style="width:30px;height:30px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+      </button>
+    </div>
     <div id="trips"></div>
   </div>
 </div>
@@ -1215,14 +1221,27 @@ document.addEventListener('click',function(e){
   if(!$('#rtac').contains(e.target)&&e.target!==$('#rto'))clearAC($('#rtac'));
 });
 
-$('#rsrch').addEventListener('click',function(){
+function doRouteSearch(showLoading){
   if(!S.rpFrom||!S.rpTo)return;
   var trips=$('#trips');
-  trips.innerHTML='<div class="state"><svg class="stico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><h3>Suche Verbindungen…</h3></div>';
+  // Always use current time for refresh (so we don't show past connections)
   var now=new Date();
-  var t=$('#rtime').value||(pad(now.getHours())+':'+pad(now.getMinutes()));
-  var ds=$('#rdate').value?$('#rdate').value.replace(/-/g,''):''+now.getFullYear()+pad(now.getMonth()+1)+pad(now.getDate());
+  var ds=S.rpLastDate||($('#rdate').value?$('#rdate').value.replace(/-/g,''):''+now.getFullYear()+pad(now.getMonth()+1)+pad(now.getDate()));
+  // On refresh: use current time so past connections disappear
+  var t;
+  if(showLoading){
+    t=$('#rtime').value||(pad(now.getHours())+':'+pad(now.getMinutes()));
+    S.rpLastDate=ds;
+  } else {
+    // Auto-refresh: use current time to get fresh results
+    t=pad(now.getHours())+':'+pad(now.getMinutes());
+  }
   var ts=t.replace(':','')+'00';
+  if(showLoading){
+    trips.innerHTML='<div class="state"><svg class="stico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg><h3>Suche Verbindungen…</h3></div>';
+  }
+  var rprbtn=$('#rprbtn');
+  if(rprbtn)rprbtn.classList.add('spinning');
   hafas([{meth:'TripSearch',req:{depLocL:[{lid:S.rpFrom.lid,type:'S'}],arrLocL:[{lid:S.rpTo.lid,type:'S'}],outDate:ds,outTime:ts,outFrwd:true,numF:5,maxChg:5}}])
     .then(function(d){
       var r=d.svcResL&&d.svcResL[0];
@@ -1230,7 +1249,44 @@ $('#rsrch').addEventListener('click',function(){
       var conns=(r.res&&r.res.outConL)||[],common=r.res&&r.res.common;
       if(!conns.length)throw new Error('Keine Verbindungen gefunden');
       renderTrips(conns,common,ds);
-    }).catch(function(e){trips.innerHTML='<div class="state err"><h3>Fehler</h3><p>'+esc(e.message)+'</p></div>';});
+    })
+    .catch(function(e){if(showLoading)trips.innerHTML='<div class="state err"><h3>Fehler</h3><p>'+esc(e.message)+'</p></div>';})
+    .finally(function(){if(rprbtn)rprbtn.classList.remove('spinning');});
+}
+
+function startRouteLoop(){
+  stopRouteLoop();
+  S.rpCdVal=REFRESH;
+  updateRpCountdown();
+  var cdwn=$('#rpcdwn'),rbtn=$('#rprbtn');
+  if(cdwn)cdwn.hidden=false;
+  if(rbtn)rbtn.hidden=false;
+  S.rpCdTimer=setInterval(function(){
+    S.rpCdVal--;
+    if(S.rpCdVal<=0){S.rpCdVal=REFRESH;doRouteSearch(false);}
+    updateRpCountdown();
+  },1000);
+}
+
+function stopRouteLoop(){
+  if(S.rpCdTimer){clearInterval(S.rpCdTimer);S.rpCdTimer=null;}
+}
+
+function updateRpCountdown(){
+  var el=$('#rpcdwn');
+  if(el)el.innerHTML='Update in <b>'+S.rpCdVal+'</b>s';
+}
+
+$('#rsrch').addEventListener('click',function(){
+  if(!S.rpFrom||!S.rpTo)return;
+  S.rpLastDate=''; // reset so it uses the selected date
+  doRouteSearch(true);
+  startRouteLoop();
+});
+
+var rprbtn=$('#rprbtn');
+if(rprbtn)rprbtn.addEventListener('click',function(){
+  S.rpCdVal=REFRESH;updateRpCountdown();doRouteSearch(false);
 });
 
 function renderTrips(conns,common,bd){
@@ -1294,6 +1350,9 @@ document.querySelectorAll('.tbtn').forEach(function(btn){
     btn.classList.add('active');
     document.getElementById('tab-'+btn.dataset.tab).classList.add('active');
     if(btn.dataset.tab==='map')setTimeout(function(){initMap();if(S.map)S.map.invalidateSize();},100);
+    // Pause route loop when leaving route tab, resume when returning
+    if(btn.dataset.tab!=='route')stopRouteLoop();
+    else if(S.rpFrom&&S.rpTo&&$('#trips').children.length)startRouteLoop();
   });
 });
 
