@@ -1153,17 +1153,47 @@ document.querySelectorAll('.fbtn').forEach(function(btn){
 
 // ── Nearby ────────────────────────────────────────────────
 $('#nearbyBtn').addEventListener('click',function(){
-  if(!navigator.geolocation){alert('GPS nicht verfügbar.');return;}
+  var acEl=$('#ac');
+  if(!navigator.geolocation){
+    acEl.innerHTML='<div class="aclist"><div class="acempty">📍 GPS nicht verfügbar in diesem Browser.</div></div>';
+    return;
+  }
+  // Show loading in autocomplete
+  acEl.innerHTML='<div class="aclist"><div class="acempty" style="color:var(--acc)">📍 Ermittle Standort…</div></div>';
   setSt('loading','Ortung…');
-  navigator.geolocation.getCurrentPosition(function(pos){
-    var lat=pos.coords.latitude,lng=pos.coords.longitude;
-    nearbyStops(lat,lng).then(function(stops){
+  navigator.geolocation.getCurrentPosition(
+    function(pos){
+      var lat=pos.coords.latitude,lng=pos.coords.longitude;
+      nearbyStops(lat,lng).then(function(stops){
+        setSt('idle','Bereit');
+        if(!stops.length){
+          acEl.innerHTML='<div class="aclist"><div class="acempty">Keine Haltestellen in der Nähe gefunden.</div></div>';
+          return;
+        }
+        mkAC(acEl,stops,function(s){selectStop(s);clearAC(acEl);});
+      }).catch(function(e){
+        setSt('error','Fehler');
+        acEl.innerHTML='<div class="aclist"><div class="acempty" style="color:var(--err)">Fehler: '+esc(e.message)+'</div></div>';
+      });
+    },
+    function(err){
       setSt('idle','Bereit');
-      if(!stops.length){alert('Keine Haltestellen in der Nähe gefunden.');return;}
-      var el=$('#ac');
-      mkAC(el,stops,function(s){selectStop(s);clearAC(el);});
-    }).catch(function(e){setSt('error','Fehler');alert('Fehler: '+e.message);});
-  },function(){setSt('error','Fehler');alert('Standort konnte nicht ermittelt werden. Bitte GPS aktivieren.');},{timeout:8000});
+      var msg='';
+      if(err.code===1){
+        msg='📍 Standortzugriff verweigert.<br><small style="color:var(--tx3)">In Chrome: Adressleiste → 🔒 → Standort → Erlauben</small>';
+      } else if(err.code===2){
+        msg='📍 Standort konnte nicht ermittelt werden. GPS aktivieren?';
+      } else {
+        msg='📍 Zeitüberschreitung. Bitte nochmal versuchen.';
+      }
+      acEl.innerHTML='<div class="aclist"><div class="acempty">'+msg+'</div></div>';
+    },
+    {
+      enableHighAccuracy:true,
+      timeout:12000,
+      maximumAge:30000
+    }
+  );
 });
 
 // ── Autocomplete ──────────────────────────────────────────
